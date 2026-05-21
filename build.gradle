@@ -1,0 +1,35 @@
+// build.gradle
+
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'com.election'
+version = '1.0'
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+
+    // Excel processing
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
+
+    // PDF generation
+    implementation 'org.apache.pdfbox:pdfbox:3.0.2'
+}
+
+application {
+
+    // Main Java class
+    mainClass = 'ElectionLabelGenerator'
+}
+
+java {
+
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
