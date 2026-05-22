@@ -1,125 +1,271 @@
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.pdmodel.PDPage;
-import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.*;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
-import org.apache.pdfbox.pdmodel.font.PDType1Font;
-import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.apache.pdfbox.pdmodel.font.*;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
 
 import java.io.*;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 public class MachineLable {
 
     public static void main(String[] args) throws Exception {
 
-        String inputFolder = "counties";
-        String outputFile = "Machine_Labels.pdf";
+        String inputFolder = "2026PrimaryCounties";
+        String outputRootFolder = "output_labels";
 
-        List<Label> labels = new ArrayList<>();
+        File outputRoot = new File(outputRootFolder);
+        outputRoot.mkdirs();
 
         File folder = new File(inputFolder);
 
-        File[] files = folder.listFiles((dir, name) -> {
-            String lowerName = name.toLowerCase();
-
-            return lowerName.endsWith(".xlsx")
-                    && !lowerName.startsWith("~$");
-        });
+        File[] files = folder.listFiles((dir, name) ->
+                name.toLowerCase().endsWith(".xlsx")
+                        && !name.startsWith("~$"));
 
         if (files == null || files.length == 0) {
             System.out.println("No county Excel files found.");
             return;
         }
 
-        Arrays.sort(files, (a, b) -> a.getName().compareToIgnoreCase(b.getName()));
+        Arrays.sort(files, (a, b) ->
+                a.getName().compareToIgnoreCase(b.getName()));
 
         for (File file : files) {
 
             String countyName = getCountyName(file);
 
-            FileInputStream fis = new FileInputStream(file);
-            Workbook workbook = new XSSFWorkbook(fis);
+            List<Label> labels =
+                    readLabelsFromCountyFile(file, countyName);
 
-            for (Sheet sheet : workbook) {
-                for (Row row : sheet) {
+            File countyFolder =
+                    new File(outputRoot, countyName);
 
-                    String pollingPlace = getCellText(row.getCell(0)).trim();
+            countyFolder.mkdirs();
 
-                    if (pollingPlace.isBlank()) {
-                        continue;
-                    }
+            String outputPdf =
+                    countyFolder.getPath()
+                            + File.separator
+                            + countyName + "_Labels.pdf";
 
-                    String lower = pollingPlace.toLowerCase();
+            createPdf(labels, outputPdf);
 
-                    if (lower.contains("polling place")
-                            || lower.contains("machines used")
-                            || lower.contains("total")) {
-                        continue;
-                    }
-
-                    int scans = getNumericValue(row.getCell(2));
-                    int ada = getNumericValue(row.getCell(3));
-                    int prints = getNumericValue(row.getCell(4));
-
-                    for (int i = 0; i < scans; i++) {
-                        labels.add(new Label(countyName, pollingPlace, "SCAN"));
-                    }
-
-                    for (int i = 0; i < ada; i++) {
-                        labels.add(new Label(countyName, pollingPlace, "ADA"));
-                    }
-
-                    for (int i = 0; i < prints; i++) {
-                        labels.add(new Label(countyName, pollingPlace, "PRINT"));
-                    }
-                }
-            }
-
-            workbook.close();
-            fis.close();
-
-            System.out.println("Processed: " + file.getName());
+            System.out.println(
+                    "Created: " + outputPdf
+                            + " | Labels: " + labels.size());
         }
-
-        createPdf(labels, outputFile);
 
         System.out.println();
         System.out.println("DONE!");
-        System.out.println("Created: " + outputFile);
-        System.out.println("Total labels: " + labels.size());
     }
 
-    private static void createPdf(List<Label> labels, String outputFile) throws Exception {
+    private static List<Label> readLabelsFromCountyFile(
+            File file,
+            String countyName
+    ) throws Exception {
 
-        float cardWidth = 3 * 72;
-        float cardHeight = 2 * 72;
+        List<Label> labels = new ArrayList<>();
 
-        PDDocument document = new PDDocument();
+        FileInputStream fis =
+                new FileInputStream(file);
+
+        Workbook workbook =
+                new XSSFWorkbook(fis);
+
+        for (Sheet sheet : workbook) {
+
+            for (Row row : sheet) {
+
+                String pollingPlace =
+                        getCellText(row.getCell(0)).trim();
+
+                if (pollingPlace.isBlank()) {
+                    continue;
+                }
+
+                String lower =
+                        pollingPlace.toLowerCase();
+
+                // Ignore headers/totals
+                if (lower.contains("polling place")
+                        || lower.contains("machines used")
+                        || lower.contains("total")) {
+                    continue;
+                }
+
+                // Skip Machines Owned row
+                if (lower.contains("machine owned")
+                        || lower.contains("machines owned")) {
+                    continue;
+                }
+
+                // Rename Spares row
+                if (lower.contains("spares")) {
+                    pollingPlace = "SPARE";
+                }
+
+                int scans =
+                        getNumericValue(row.getCell(2));
+
+                int ada =
+                        getNumericValue(row.getCell(3));
+
+                int prints =
+                        getNumericValue(row.getCell(4));
+
+                boolean isSpare =
+                        pollingPlace.equalsIgnoreCase("SPARE");
+
+                // SCAN labels (printed TWICE)
+                for (int i = 1; i <= scans; i++) {
+
+                    String labelText =
+                            isSpare
+                                    ? "SCAN"
+                                    : "SCAN " + i;
+
+                    labels.add(
+                            new Label(
+                                    countyName,
+                                    pollingPlace,
+                                    labelText
+                            )
+                    );
+
+                    labels.add(
+                            new Label(
+                                    countyName,
+                                    pollingPlace,
+                                    labelText
+                            )
+                    );
+                }
+
+                // ADA labels
+                for (int i = 1; i <= ada; i++) {
+
+                    String labelText =
+                            isSpare
+                                    ? "ADA"
+                                    : "ADA " + i;
+
+                    labels.add(
+                            new Label(
+                                    countyName,
+                                    pollingPlace,
+                                    labelText
+                            )
+                    );
+                }
+
+                // PRINT labels
+                for (int i = 1; i <= prints; i++) {
+
+                    String labelText =
+                            isSpare
+                                    ? "PRINT"
+                                    : "PRINT " + i;
+
+                    labels.add(
+                            new Label(
+                                    countyName,
+                                    pollingPlace,
+                                    labelText
+                            )
+                    );
+                }
+            }
+        }
+
+        workbook.close();
+        fis.close();
+
+        return labels;
+    }
+
+    private static void createPdf(
+            List<Label> labels,
+            String outputFile
+    ) throws Exception {
+
+        float pageWidth = 11 * 72;
+        float pageHeight = 8.5f * 72;
+
+        // 4x2 labels
+        float labelWidth = 4 * 72;
+        float labelHeight = 2 * 72;
+
+        float leftMargin = 1.25f * 72;
+        float topMargin = 0.25f * 72;
+
+        int labelsAcross = 2;
+        int labelsDown = 4;
+
+        int labelsPerPage =
+                labelsAcross * labelsDown;
+
+        PDDocument document =
+                new PDDocument();
 
         PDType1Font boldFont =
-                new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+                new PDType1Font(
+                        Standard14Fonts.FontName.HELVETICA_BOLD);
 
-        for (Label label : labels) {
+        for (int i = 0; i < labels.size(); i++) {
 
-            PDPage page = new PDPage(new PDRectangle(cardWidth, cardHeight));
-            document.addPage(page);
+            if (i % labelsPerPage == 0) {
+
+                document.addPage(
+                        new PDPage(
+                                new PDRectangle(
+                                        pageWidth,
+                                        pageHeight
+                                )
+                        )
+                );
+            }
+
+            PDPage page =
+                    document.getPage(
+                            document.getNumberOfPages() - 1);
 
             PDPageContentStream content =
-                    new PDPageContentStream(document, page);
+                    new PDPageContentStream(
+                            document,
+                            page,
+                            PDPageContentStream.AppendMode.APPEND,
+                            true
+                    );
 
-            drawCenteredText(content, boldFont, 16,
-                    label.county, cardWidth, 100);
+            int positionOnPage =
+                    i % labelsPerPage;
 
-            drawCenteredText(content, boldFont, 13,
-                    label.pollingPlace, cardWidth, 72);
+            int column =
+                    positionOnPage % labelsAcross;
 
-            drawCenteredText(content, boldFont, 20,
-                    label.machineType, cardWidth, 38);
+            int row =
+                    positionOnPage / labelsAcross;
+
+            float x =
+                    leftMargin + (column * labelWidth);
+
+            float y =
+                    pageHeight
+                            - topMargin
+                            - labelHeight
+                            - (row * labelHeight);
+
+            drawLabel(
+                    content,
+                    boldFont,
+                    labels.get(i),
+                    x,
+                    y,
+                    labelWidth,
+                    labelHeight
+            );
 
             content.close();
         }
@@ -128,13 +274,70 @@ public class MachineLable {
         document.close();
     }
 
+    private static void drawLabel(
+            PDPageContentStream content,
+            PDType1Font font,
+            Label label,
+            float x,
+            float y,
+            float width,
+            float height
+    ) throws Exception {
+
+        // Border
+        content.setLineWidth(1);
+
+        content.addRect(
+                x,
+                y,
+                width,
+                height
+        );
+
+        content.stroke();
+
+        // County
+        drawCenteredText(
+                content,
+                font,
+                18,
+                label.county,
+                x,
+                y + 105,
+                width
+        );
+
+        // Polling place
+        drawCenteredText(
+                content,
+                font,
+                12,
+                label.pollingPlace,
+                x,
+                y + 78,
+                width
+        );
+
+        // Machine type
+        drawCenteredText(
+                content,
+                font,
+                22,
+                label.machineType,
+                x,
+                y + 28,
+                width
+        );
+    }
+
     private static void drawCenteredText(
             PDPageContentStream content,
             PDType1Font font,
             int fontSize,
             String text,
-            float pageWidth,
-            float y
+            float labelX,
+            float startY,
+            float labelWidth
     ) throws Exception {
 
         if (text == null) {
@@ -143,18 +346,92 @@ public class MachineLable {
 
         text = text.trim();
 
-        if (text.length() > 32) {
-            text = text.substring(0, 32);
+        float maxTextWidth =
+                labelWidth - 20;
+
+        List<String> lines =
+                new ArrayList<>();
+
+        String[] words =
+                text.split(" ");
+
+        StringBuilder currentLine =
+                new StringBuilder();
+
+        for (String word : words) {
+
+            String testLine;
+
+            if (currentLine.isEmpty()) {
+                testLine = word;
+            } else {
+                testLine =
+                        currentLine + " " + word;
+            }
+
+            float textWidth =
+                    font.getStringWidth(testLine)
+                            / 1000 * fontSize;
+
+            if (textWidth > maxTextWidth) {
+
+                if (!currentLine.isEmpty()) {
+
+                    lines.add(
+                            currentLine.toString()
+                    );
+                }
+
+                currentLine =
+                        new StringBuilder(word);
+
+            } else {
+
+                if (!currentLine.isEmpty()) {
+                    currentLine.append(" ");
+                }
+
+                currentLine.append(word);
+            }
         }
 
-        float textWidth = font.getStringWidth(text) / 1000 * fontSize;
-        float x = (pageWidth - textWidth) / 2;
+        if (!currentLine.isEmpty()) {
+            lines.add(currentLine.toString());
+        }
 
-        content.beginText();
-        content.setFont(font, fontSize);
-        content.newLineAtOffset(x, y);
-        content.showText(text);
-        content.endText();
+        float lineHeight =
+                fontSize + 4;
+
+        float y = startY;
+
+        for (String line : lines) {
+
+            float textWidth =
+                    font.getStringWidth(line)
+                            / 1000 * fontSize;
+
+            float x =
+                    labelX
+                            + ((labelWidth - textWidth) / 2);
+
+            content.beginText();
+
+            content.setFont(
+                    font,
+                    fontSize
+            );
+
+            content.newLineAtOffset(
+                    x,
+                    y
+            );
+
+            content.showText(line);
+
+            content.endText();
+
+            y -= lineHeight;
+        }
     }
 
     private static int getNumericValue(Cell cell) {
@@ -164,24 +441,33 @@ public class MachineLable {
         }
 
         try {
-            if (cell.getCellType() == CellType.NUMERIC) {
-                return (int) cell.getNumericCellValue();
+
+            if (cell.getCellType()
+                    == CellType.NUMERIC) {
+
+                return (int)
+                        cell.getNumericCellValue();
             }
 
-            if (cell.getCellType() == CellType.FORMULA) {
-                if (cell.getCachedFormulaResultType() == CellType.NUMERIC) {
-                    return (int) cell.getNumericCellValue();
-                }
+            if (cell.getCellType()
+                    == CellType.FORMULA) {
 
-                if (cell.getCachedFormulaResultType() == CellType.STRING) {
-                    String text = cell.getStringCellValue().trim();
-                    return Integer.parseInt(text);
+                if (cell.getCachedFormulaResultType()
+                        == CellType.NUMERIC) {
+
+                    return (int)
+                            cell.getNumericCellValue();
                 }
             }
 
-            if (cell.getCellType() == CellType.STRING) {
-                String text = cell.getStringCellValue().trim();
-                text = text.replace(",", "");
+            if (cell.getCellType()
+                    == CellType.STRING) {
+
+                String text =
+                        cell.getStringCellValue()
+                                .trim()
+                                .replace(",", "");
+
                 return Integer.parseInt(text);
             }
 
@@ -199,21 +485,38 @@ public class MachineLable {
         }
 
         try {
-            if (cell.getCellType() == CellType.STRING) {
+
+            if (cell.getCellType()
+                    == CellType.STRING) {
+
                 return cell.getStringCellValue();
             }
 
-            if (cell.getCellType() == CellType.NUMERIC) {
-                return String.valueOf((int) cell.getNumericCellValue());
+            if (cell.getCellType()
+                    == CellType.NUMERIC) {
+
+                return String.valueOf(
+                        (int)
+                                cell.getNumericCellValue()
+                );
             }
 
-            if (cell.getCellType() == CellType.FORMULA) {
-                if (cell.getCachedFormulaResultType() == CellType.STRING) {
+            if (cell.getCellType()
+                    == CellType.FORMULA) {
+
+                if (cell.getCachedFormulaResultType()
+                        == CellType.STRING) {
+
                     return cell.getStringCellValue();
                 }
 
-                if (cell.getCachedFormulaResultType() == CellType.NUMERIC) {
-                    return String.valueOf((int) cell.getNumericCellValue());
+                if (cell.getCachedFormulaResultType()
+                        == CellType.NUMERIC) {
+
+                    return String.valueOf(
+                            (int)
+                                    cell.getNumericCellValue()
+                    );
                 }
             }
 
@@ -238,7 +541,12 @@ public class MachineLable {
         String pollingPlace;
         String machineType;
 
-        Label(String county, String pollingPlace, String machineType) {
+        Label(
+                String county,
+                String pollingPlace,
+                String machineType
+        ) {
+
             this.county = county;
             this.pollingPlace = pollingPlace;
             this.machineType = machineType;
